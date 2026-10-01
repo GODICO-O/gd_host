@@ -12,7 +12,6 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.Spinner
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -26,11 +25,12 @@ class MainActivity : AppCompatActivity() {
 
     private val PERMISSION_REQUEST_CODE = 1001
 
-    private val libsDir: File by lazy {
-        File(getExternalFilesDir(null)?.parentFile?.parentFile, "media/com.godico.devcore.launcher/libs").apply {
-            if (!exists()) mkdirs()
+    // Path langsung ke: /sdcard/Android/media/com.godico.devcore.launcher/libs
+    private val libsDir: File
+        get() {
+            val mediaDir = File(Environment.getExternalStorageDirectory(), "Android/media/${packageName}/libs")
+            return mediaDir
         }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,15 +40,22 @@ class MainActivity : AppCompatActivity() {
         btnRefresh = findViewById(R.id.btnRefresh)
         txtStatus = findViewById(R.id.txtStatus)
 
-        // Cek dan minta izin penyimpanan langsung saat aplikasi pertama kali dibuka
-        checkAndRequestPermissions()
-
         btnRefresh.setOnClickListener {
             if (hasStoragePermission()) {
                 scanLibraries()
             } else {
                 checkAndRequestPermissions()
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Cek ulang izin setiap kali aplikasi kembali aktif/dibuka
+        if (hasStoragePermission()) {
+            scanLibraries()
+        } else {
+            checkAndRequestPermissions()
         }
     }
 
@@ -65,56 +72,42 @@ class MainActivity : AppCompatActivity() {
     private fun checkAndRequestPermissions() {
         if (hasStoragePermission()) {
             scanLibraries()
-        } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        addCategory("android.intent.category.DEFAULT")
-                        data = Uri.parse("package:$packageName")
-                    }
-                    startActivityForResult(intent, PERMISSION_REQUEST_CODE)
-                } catch (e: Exception) {
-                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                    startActivityForResult(intent, PERMISSION_REQUEST_CODE)
+            return
+        }
+
+        txtStatus.text = "Status: Meminta izin penyimpanan..."
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    addCategory("android.intent.category.DEFAULT")
+                    data = Uri.parse("package:$packageName")
                 }
-            } else {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(
-                        Manifest.permission.READ_EXTERNAL_STORAGE,
-                        Manifest.permission.WRITE_EXTERNAL_STORAGE
-                    ),
-                    PERMISSION_REQUEST_CODE
-                )
+                startActivity(intent)
+            } catch (e: Exception) {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                startActivity(intent)
             }
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                scanLibraries()
-            } else {
-                txtStatus.text = "Status: Izin penyimpanan ditolak!\nHarap berikan izin file untuk melanjutkan."
-            }
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (hasStoragePermission()) {
-                scanLibraries()
-            } else {
-                txtStatus.text = "Status: Izin All Files Access ditolak!"
-            }
+        } else {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ),
+                PERMISSION_REQUEST_CODE
+            )
         }
     }
 
     private fun scanLibraries() {
+        // Buat folder jika belum ada
         if (!libsDir.exists()) {
-            libsDir.mkdirs()
+            val created = libsDir.mkdirs()
+            if (!created && !libsDir.exists()) {
+                txtStatus.text = "Status: Gagal membuat folder!\nPath: ${libsDir.absolutePath}"
+                return
+            }
         }
 
         val soFiles = libsDir.listFiles { _, name -> name.endsWith(".so", ignoreCase = true) }
@@ -123,12 +116,12 @@ class MainActivity : AppCompatActivity() {
             val emptyList = listOf("Tidak ada file .so ditemukan")
             val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList)
             spinnerLibraries.adapter = adapter
-            txtStatus.text = "Status: Folder libs/ kosong!\nPath: ${libsDir.absolutePath}"
+            txtStatus.text = "Status: Folder libs kosong!\nSilakan letakkan file .so di:\n${libsDir.absolutePath}"
         } else {
             val fileNames = soFiles.map { it.name }
             val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, fileNames)
             spinnerLibraries.adapter = adapter
-            txtStatus.text = "Status: Ditemukan ${soFiles.size} library .so\nLocation: ${libsDir.absolutePath}"
+            txtStatus.text = "Status: Ditemukan ${soFiles.size} library .so\nPath: ${libsDir.absolutePath}"
         }
     }
 }
