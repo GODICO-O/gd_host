@@ -7,14 +7,17 @@ import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var spinnerLibraries: Spinner
     private lateinit var btnRefresh: Button
+    private lateinit var btnExecute: Button
     private lateinit var txtStatus: TextView
 
-    // Dapatkan folder media resmi app: /sdcard/Android/media/com.godico.devcore.launcher/
     private val baseMediaDir: File?
         get() = externalMediaDirs.firstOrNull()
 
@@ -33,13 +36,17 @@ class MainActivity : AppCompatActivity() {
 
         spinnerLibraries = findViewById(R.id.spinnerLibraries)
         btnRefresh = findViewById(R.id.btnRefresh)
+        btnExecute = findViewById(R.id.btnExecute)
         txtStatus = findViewById(R.id.txtStatus)
 
-        // Inisialisasi folder workspace
         initWorkspaceFolders()
 
         btnRefresh.setOnClickListener {
             scanLibraries()
+        }
+
+        btnExecute.setOnClickListener {
+            executeSelectedLibrary()
         }
     }
 
@@ -48,9 +55,6 @@ class MainActivity : AppCompatActivity() {
         scanLibraries()
     }
 
-    /**
-     * Membuat folder libs, assets, dan logs di Android/media/com.godico.devcore.launcher/
-     */
     private fun initWorkspaceFolders() {
         try {
             if (baseMediaDir != null) {
@@ -63,9 +67,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Memindai file .so di folder libs/
-     */
     private fun scanLibraries() {
         initWorkspaceFolders()
 
@@ -86,6 +87,55 @@ class MainActivity : AppCompatActivity() {
             val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, fileNames)
             spinnerLibraries.adapter = adapter
             txtStatus.text = "Status: Ditemukan ${soFiles.size} library .so\nPath: ${libsDir.absolutePath}"
+        }
+    }
+
+    private fun executeSelectedLibrary() {
+        val selectedItem = spinnerLibraries.selectedItem?.toString()
+
+        if (selectedItem.isNullOrEmpty() || selectedItem == "Tidak ada file .so ditemukan") {
+            txtStatus.text = "Status ERROR: Tidak ada file .so yang dipilih!"
+            return
+        }
+
+        val targetSoFile = File(libsDir, selectedItem)
+
+        if (!targetSoFile.exists()) {
+            txtStatus.text = "Status ERROR: File ${targetSoFile.name} tidak ditemukan!"
+            return
+        }
+
+        txtStatus.text = "Status: Memuat ${targetSoFile.name}..."
+
+        try {
+            // Load native .so ke memori JVM
+            System.load(targetSoFile.absolutePath)
+
+            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val logMsg = "[$timeStamp] SUCCESS: Loaded ${targetSoFile.name}\n"
+            writeLog(logMsg)
+
+            txtStatus.text = "Status: BERHASIL MENGEKSEKUSI!\n" +
+                    "Library: ${targetSoFile.name}\n" +
+                    "Log disimpan di: ${File(logsDir, "launcher.log").absolutePath}"
+
+        } catch (e: Throwable) {
+            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val errorMsg = "[$timeStamp] ERROR: Failed to load ${targetSoFile.name} -> ${e.message}\n"
+            writeLog(errorMsg)
+
+            txtStatus.text = "Status EKSEKUSI GAGAL:\n" +
+                    "Error: ${e.localizedMessage ?: e.message}\n" +
+                    "File: ${targetSoFile.name}"
+        }
+    }
+
+    private fun writeLog(message: String) {
+        try {
+            val logFile = File(logsDir, "launcher.log")
+            logFile.appendText(message)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }
