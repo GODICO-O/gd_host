@@ -2,6 +2,7 @@ package com.godico.devcore.launcher
 
 import android.os.Bundle
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -18,6 +19,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnRefresh: Button
     private lateinit var btnMoveUp: Button
     private lateinit var btnMoveDown: Button
+    private lateinit var chkPassiveDependencies: CheckBox
     private lateinit var btnExecute: Button
     private lateinit var txtStatus: TextView
 
@@ -44,6 +46,7 @@ class MainActivity : AppCompatActivity() {
         btnRefresh = findViewById(R.id.btnRefresh)
         btnMoveUp = findViewById(R.id.btnMoveUp)
         btnMoveDown = findViewById(R.id.btnMoveDown)
+        chkPassiveDependencies = findViewById(R.id.chkPassiveDependencies)
         btnExecute = findViewById(R.id.btnExecute)
         txtStatus = findViewById(R.id.txtStatus)
 
@@ -65,7 +68,7 @@ class MainActivity : AppCompatActivity() {
             if (adapter.selectedPosition != -1) {
                 adapter.moveUp(adapter.selectedPosition)
             } else {
-                txtStatus.text = "Status: Pilih/sentuh salah satu baris file dulu untuk dipindahkan!"
+                txtStatus.text = "Status: Sentuh salah satu baris file dulu sampai berwarna biru lalu tekan MOVE UP!"
             }
         }
 
@@ -73,7 +76,7 @@ class MainActivity : AppCompatActivity() {
             if (adapter.selectedPosition != -1) {
                 adapter.moveDown(adapter.selectedPosition)
             } else {
-                txtStatus.text = "Status: Pilih/sentuh salah satu baris file dulu untuk dipindahkan!"
+                txtStatus.text = "Status: Sentuh salah satu baris file dulu sampai berwarna biru lalu tekan MOVE DOWN!"
             }
         }
 
@@ -136,9 +139,9 @@ class MainActivity : AppCompatActivity() {
         val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
         logStringBuilder.append("=== EXECUTION RUN AT $timeStamp ===\n")
 
-        txtStatus.text = "Status: Menyalin ${selectedQueue.size} file ke internal storage..."
+        txtStatus.text = "Status: Menyiapkan file ke internal storage..."
 
-        // 1. Copy SEMUA file .so di libsDir ke filesDir (termasuk dependency implisit)
+        // 1. Salin SEMUA file .so di libsDir ke filesDir internal
         val allSoInLibs = libsDir.listFiles { _, name -> name.endsWith(".so", ignoreCase = true) }
         allSoInLibs?.forEach { source ->
             val target = File(filesDir, source.name)
@@ -147,37 +150,68 @@ class MainActivity : AppCompatActivity() {
             target.setReadable(true, false)
         }
 
-        // 2. Load satu per satu sesuai urutan antrean yang dipilih user (#1, #2, dst)
-        var successCount = 0
-        val totalCount = selectedQueue.size
+        val isPassiveMode = chkPassiveDependencies.isChecked
 
-        for ((index, item) in selectedQueue.withIndex()) {
-            val targetSoFile = File(filesDir, item.fileName)
-            val stepInfo = "[${index + 1}/$totalCount] Loading ${item.fileName}..."
-            
+        if (isPassiveMode) {
+            // MODE PASSIVE: Memuat HANYA file target utama (nomor urut terakhir dalam queue)
+            // Sisa file dependency seperti libfmod.so akan otomatis di-link oleh Android OS Linker dari filesDir tanpa trigger JNI Crash
+            val mainTargetItem = selectedQueue.last()
+            val targetSoFile = File(filesDir, mainTargetItem.fileName)
+
             try {
                 System.load(targetSoFile.absolutePath)
-                successCount++
-                logStringBuilder.append("SUCCESS: $stepInfo\n")
-            } catch (e: Throwable) {
-                val errorMsg = "FAILED: $stepInfo -> ${e.message}\n"
-                logStringBuilder.append(errorMsg)
-                
+                val msg = "SUCCESS (Passive Mode): Executed ${mainTargetItem.fileName} with auto-linked dependencies.\n"
+                logStringBuilder.append(msg)
                 writeLog(logStringBuilder.toString())
-                txtStatus.text = "Status EKSEKUSI TERHENTI di (#${index + 1}):\n" +
-                        "Failed file: ${item.fileName}\n" +
+
+                txtStatus.text = "Status: BERHASIL MENGEKSEKUSI TARGET!\n" +
+                        "Main Target: ${mainTargetItem.fileName}\n" +
+                        "Dependencies Passive: ${selectedQueue.dropLast(1).joinToString { it.fileName }}\n" +
+                        "Log: ${File(logsDir, "launcher.log").absolutePath}"
+
+            } catch (e: Throwable) {
+                val errorMsg = "FAILED (Passive Mode): ${mainTargetItem.fileName} -> ${e.message}\n"
+                logStringBuilder.append(errorMsg)
+                writeLog(logStringBuilder.toString())
+
+                txtStatus.text = "Status EKSEKUSI GAGAL:\n" +
+                        "Target: ${mainTargetItem.fileName}\n" +
                         "Error: ${e.localizedMessage ?: e.message}"
-                return
             }
+
+        } else {
+            // MODE SEQUENTIAL: Panggil System.load() manual satu per satu sesuai urutan #1, #2, #3
+            var successCount = 0
+            val totalCount = selectedQueue.size
+
+            for ((index, item) in selectedQueue.withIndex()) {
+                val targetSoFile = File(filesDir, item.fileName)
+                val stepInfo = "[${index + 1}/$totalCount] Loading ${item.fileName}..."
+
+                try {
+                    System.load(targetSoFile.absolutePath)
+                    successCount++
+                    logStringBuilder.append("SUCCESS: $stepInfo\n")
+                } catch (e: Throwable) {
+                    val errorMsg = "FAILED: $stepInfo -> ${e.message}\n"
+                    logStringBuilder.append(errorMsg)
+                    writeLog(logStringBuilder.toString())
+
+                    txtStatus.text = "Status EKSEKUSI TERHENTI di (#${index + 1}):\n" +
+                            "Failed file: ${item.fileName}\n" +
+                            "Error: ${e.localizedMessage ?: e.message}"
+                    return
+                }
+            }
+
+            logStringBuilder.append("RESULT: $successCount/$totalCount libraries loaded successfully.\n\n")
+            writeLog(logStringBuilder.toString())
+
+            val loadedNames = selectedQueue.joinToString("\n") { " -> ${it.fileName}" }
+            txtStatus.text = "Status: BERHASIL MEMUAT ALL SEQUENTIAL! ($successCount/$totalCount)\n" +
+                    "Urutan Load:\n$loadedNames\n" +
+                    "Log: ${File(logsDir, "launcher.log").absolutePath}"
         }
-
-        logStringBuilder.append("RESULT: $successCount/$totalCount libraries loaded successfully.\n\n")
-        writeLog(logStringBuilder.toString())
-
-        val loadedNames = selectedQueue.joinToString("\n") { " -> ${it.fileName}" }
-        txtStatus.text = "Status: BERHASIL MEMUAT SEMUA! ($successCount/$totalCount)\n" +
-                "Urutan Load:\n$loadedNames\n" +
-                "Log: ${File(logsDir, "launcher.log").absolutePath}"
     }
 
     private fun copyFile(source: File, target: File) {

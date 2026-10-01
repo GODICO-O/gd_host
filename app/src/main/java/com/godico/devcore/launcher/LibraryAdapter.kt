@@ -15,11 +15,10 @@ data class LibraryItem(
 
 class LibraryAdapter(
     context: Context,
-    private val items: MutableList<LibraryItem>
+    val items: MutableList<LibraryItem>
 ) : ArrayAdapter<LibraryItem>(context, 0, items) {
 
     var selectedPosition: Int = -1
-    // Antrean urutan berdasarkan klik pengguna
     val selectedQueue = mutableListOf<LibraryItem>()
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -32,16 +31,17 @@ class LibraryAdapter(
         val item = items[position]
 
         txtLibraryName.text = item.fileName
+
+        // Unbind listener sementara untuk mencegah glitch listener recycle view
+        chkSelected.setOnCheckedChangeListener(null)
         chkSelected.isChecked = item.isSelected
 
-        // Visual Selection untuk Move Up/Down
         if (position == selectedPosition) {
             view.setBackgroundColor(0x332563EB.toInt())
         } else {
             view.setBackgroundColor(0x00000000)
         }
 
-        // Tampilkan nomor urut berdasarkan posisi di selectedQueue
         val orderIndex = selectedQueue.indexOf(item)
         if (item.isSelected && orderIndex != -1) {
             txtOrderIndex.text = "#${orderIndex + 1}"
@@ -50,10 +50,8 @@ class LibraryAdapter(
             txtOrderIndex.visibility = View.GONE
         }
 
-        chkSelected.setOnClickListener {
-            val isChecked = chkSelected.isChecked
+        chkSelected.setOnCheckedChangeListener { _, isChecked ->
             item.isSelected = isChecked
-
             if (isChecked) {
                 if (!selectedQueue.contains(item)) {
                     selectedQueue.add(item)
@@ -69,9 +67,8 @@ class LibraryAdapter(
 
     fun moveUp(position: Int) {
         if (position > 0 && position < items.size) {
-            val temp = items[position]
-            items[position] = items[position - 1]
-            items[position - 1] = temp
+            val item = items.removeAt(position)
+            items.add(position - 1, item)
             selectedPosition = position - 1
             notifyDataSetChanged()
         }
@@ -79,9 +76,8 @@ class LibraryAdapter(
 
     fun moveDown(position: Int) {
         if (position >= 0 && position < items.size - 1) {
-            val temp = items[position]
-            items[position] = items[position + 1]
-            items[position + 1] = temp
+            val item = items.removeAt(position)
+            items.add(position + 1, item)
             selectedPosition = position + 1
             notifyDataSetChanged()
         }
