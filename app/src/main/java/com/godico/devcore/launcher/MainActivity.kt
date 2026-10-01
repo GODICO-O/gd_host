@@ -7,6 +7,8 @@ import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -98,35 +100,54 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val targetSoFile = File(libsDir, selectedItem)
+        val sourceSoFile = File(libsDir, selectedItem)
 
-        if (!targetSoFile.exists()) {
-            txtStatus.text = "Status ERROR: File ${targetSoFile.name} tidak ditemukan!"
+        if (!sourceSoFile.exists()) {
+            txtStatus.text = "Status ERROR: File ${sourceSoFile.name} tidak ditemukan!"
             return
         }
 
-        txtStatus.text = "Status: Memuat ${targetSoFile.name}..."
+        txtStatus.text = "Status: Menyiapkan ${sourceSoFile.name} ke internal storage..."
 
         try {
-            // Load native .so ke memori JVM
-            System.load(targetSoFile.absolutePath)
+            // 1. Salin file .so dari media SDCard ke folder internal app privat (melewati Linker Namespace restriction)
+            val internalSoFile = File(filesDir, sourceSoFile.name)
+            copyFile(sourceSoFile, internalSoFile)
+
+            // Pastikan file executable
+            internalSoFile.setExecutable(true, false)
+            internalSoFile.setReadable(true, false)
+
+            txtStatus.text = "Status: Memuat native library..."
+
+            // 2. Load dari internal privat storage
+            System.load(internalSoFile.absolutePath)
 
             val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            val logMsg = "[$timeStamp] SUCCESS: Loaded ${targetSoFile.name}\n"
+            val logMsg = "[$timeStamp] SUCCESS: Loaded ${sourceSoFile.name} from internal storage\n"
             writeLog(logMsg)
 
             txtStatus.text = "Status: BERHASIL MENGEKSEKUSI!\n" +
-                    "Library: ${targetSoFile.name}\n" +
-                    "Log disimpan di: ${File(logsDir, "launcher.log").absolutePath}"
+                    "Library: ${sourceSoFile.name}\n" +
+                    "Loaded Path: ${internalSoFile.absolutePath}\n" +
+                    "Log: ${File(logsDir, "launcher.log").absolutePath}"
 
         } catch (e: Throwable) {
             val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            val errorMsg = "[$timeStamp] ERROR: Failed to load ${targetSoFile.name} -> ${e.message}\n"
+            val errorMsg = "[$timeStamp] ERROR: Failed to load ${sourceSoFile.name} -> ${e.message}\n"
             writeLog(errorMsg)
 
             txtStatus.text = "Status EKSEKUSI GAGAL:\n" +
                     "Error: ${e.localizedMessage ?: e.message}\n" +
-                    "File: ${targetSoFile.name}"
+                    "File: ${sourceSoFile.name}"
+        }
+    }
+
+    private fun copyFile(source: File, target: File) {
+        FileInputStream(source).use { input ->
+            FileOutputStream(target).use { output ->
+                input.copyTo(output)
+            }
         }
     }
 
