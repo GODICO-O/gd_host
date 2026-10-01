@@ -19,6 +19,8 @@ class LibraryAdapter(
 ) : ArrayAdapter<LibraryItem>(context, 0, items) {
 
     var selectedPosition: Int = -1
+    // Antrean urutan berdasarkan klik pengguna
+    val selectedQueue = mutableListOf<LibraryItem>()
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val view = convertView ?: LayoutInflater.from(context).inflate(R.layout.item_library, parent, false)
@@ -32,16 +34,15 @@ class LibraryAdapter(
         txtLibraryName.text = item.fileName
         chkSelected.isChecked = item.isSelected
 
-        // Highlight jika baris ini sedang dipilih untuk di-move up / move down
+        // Visual Selection untuk Move Up/Down
         if (position == selectedPosition) {
             view.setBackgroundColor(0x332563EB.toInt())
         } else {
             view.setBackgroundColor(0x00000000)
         }
 
-        // Tampilkan nomor urut eksekusi jika di-centang
-        val checkedList = items.filter { it.isSelected }
-        val orderIndex = checkedList.indexOf(item)
+        // Tampilkan nomor urut berdasarkan posisi di selectedQueue
+        val orderIndex = selectedQueue.indexOf(item)
         if (item.isSelected && orderIndex != -1) {
             txtOrderIndex.text = "#${orderIndex + 1}"
             txtOrderIndex.visibility = View.VISIBLE
@@ -49,8 +50,17 @@ class LibraryAdapter(
             txtOrderIndex.visibility = View.GONE
         }
 
-        chkSelected.setOnCheckedChangeListener { _, isChecked ->
+        chkSelected.setOnClickListener {
+            val isChecked = chkSelected.isChecked
             item.isSelected = isChecked
+
+            if (isChecked) {
+                if (!selectedQueue.contains(item)) {
+                    selectedQueue.add(item)
+                }
+            } else {
+                selectedQueue.remove(item)
+            }
             notifyDataSetChanged()
         }
 
@@ -77,7 +87,8 @@ class LibraryAdapter(
         }
     }
 
-    fun getOrderedSelectedLibraries(): List<String> {
-        return items.filter { it.isSelected }.map { it.fileName }
+    fun clearQueue() {
+        selectedQueue.clear()
+        selectedPosition = -1
     }
 }

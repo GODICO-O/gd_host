@@ -64,12 +64,16 @@ class MainActivity : AppCompatActivity() {
         btnMoveUp.setOnClickListener {
             if (adapter.selectedPosition != -1) {
                 adapter.moveUp(adapter.selectedPosition)
+            } else {
+                txtStatus.text = "Status: Pilih/sentuh salah satu baris file dulu untuk dipindahkan!"
             }
         }
 
         btnMoveDown.setOnClickListener {
             if (adapter.selectedPosition != -1) {
                 adapter.moveDown(adapter.selectedPosition)
+            } else {
+                txtStatus.text = "Status: Pilih/sentuh salah satu baris file dulu untuk dipindahkan!"
             }
         }
 
@@ -106,7 +110,7 @@ class MainActivity : AppCompatActivity() {
         val soFiles = libsDir.listFiles { _, name -> name.endsWith(".so", ignoreCase = true) }
 
         libraryList.clear()
-        adapter.selectedPosition = -1
+        adapter.clearQueue()
 
         if (!soFiles.isNullOrEmpty()) {
             soFiles.sortedBy { it.name }.forEach { file ->
@@ -121,9 +125,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun executeSelectedLibrariesInOrder() {
-        val selectedFiles = adapter.getOrderedSelectedLibraries()
+        val selectedQueue = adapter.selectedQueue
 
-        if (selectedFiles.isEmpty()) {
+        if (selectedQueue.isEmpty()) {
             txtStatus.text = "Status ERROR: Belum ada file .so yang dicentang!"
             return
         }
@@ -132,26 +136,24 @@ class MainActivity : AppCompatActivity() {
         val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
         logStringBuilder.append("=== EXECUTION RUN AT $timeStamp ===\n")
 
-        txtStatus.text = "Status: Menyalin ${selectedFiles.size} file ke internal storage..."
+        txtStatus.text = "Status: Menyalin ${selectedQueue.size} file ke internal storage..."
 
-        // 1. Copy semua file terpilih ke internal privat filesDir dulu
-        for (fileName in selectedFiles) {
-            val source = File(libsDir, fileName)
-            val target = File(filesDir, fileName)
-            if (source.exists()) {
-                copyFile(source, target)
-                target.setExecutable(true, false)
-                target.setReadable(true, false)
-            }
+        // 1. Copy SEMUA file .so di libsDir ke filesDir (termasuk dependency implisit)
+        val allSoInLibs = libsDir.listFiles { _, name -> name.endsWith(".so", ignoreCase = true) }
+        allSoInLibs?.forEach { source ->
+            val target = File(filesDir, source.name)
+            copyFile(source, target)
+            target.setExecutable(true, false)
+            target.setReadable(true, false)
         }
 
-        // 2. Load satu per satu sesuai urutan (#1, #2, dst)
+        // 2. Load satu per satu sesuai urutan antrean yang dipilih user (#1, #2, dst)
         var successCount = 0
-        val totalCount = selectedFiles.size
+        val totalCount = selectedQueue.size
 
-        for ((index, fileName) in selectedFiles.withIndex()) {
-            val targetSoFile = File(filesDir, fileName)
-            val stepInfo = "[${index + 1}/$totalCount] Loading $fileName..."
+        for ((index, item) in selectedQueue.withIndex()) {
+            val targetSoFile = File(filesDir, item.fileName)
+            val stepInfo = "[${index + 1}/$totalCount] Loading ${item.fileName}..."
             
             try {
                 System.load(targetSoFile.absolutePath)
@@ -161,10 +163,9 @@ class MainActivity : AppCompatActivity() {
                 val errorMsg = "FAILED: $stepInfo -> ${e.message}\n"
                 logStringBuilder.append(errorMsg)
                 
-                // Stop eksekusi jika dependency di tengah jalan gagal
                 writeLog(logStringBuilder.toString())
                 txtStatus.text = "Status EKSEKUSI TERHENTI di (#${index + 1}):\n" +
-                        "Failed file: $fileName\n" +
+                        "Failed file: ${item.fileName}\n" +
                         "Error: ${e.localizedMessage ?: e.message}"
                 return
             }
@@ -173,8 +174,9 @@ class MainActivity : AppCompatActivity() {
         logStringBuilder.append("RESULT: $successCount/$totalCount libraries loaded successfully.\n\n")
         writeLog(logStringBuilder.toString())
 
+        val loadedNames = selectedQueue.joinToString("\n") { " -> ${it.fileName}" }
         txtStatus.text = "Status: BERHASIL MEMUAT SEMUA! ($successCount/$totalCount)\n" +
-                "Urutan Load:\n" + selectedFiles.joinToString("\n") { " -> $it" } + "\n" +
+                "Urutan Load:\n$loadedNames\n" +
                 "Log: ${File(logsDir, "launcher.log").absolutePath}"
     }
 
