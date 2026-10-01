@@ -1,9 +1,8 @@
 package com.godico.devcore.launcher
 
 import android.os.Bundle
-import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.Spinner
+import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
@@ -15,10 +14,15 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var spinnerLibraries: Spinner
+    private lateinit var listViewLibraries: ListView
     private lateinit var btnRefresh: Button
+    private lateinit var btnMoveUp: Button
+    private lateinit var btnMoveDown: Button
     private lateinit var btnExecute: Button
     private lateinit var txtStatus: TextView
+
+    private val libraryList = mutableListOf<LibraryItem>()
+    private lateinit var adapter: LibraryAdapter
 
     private val baseMediaDir: File?
         get() = externalMediaDirs.firstOrNull()
@@ -36,19 +40,41 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        spinnerLibraries = findViewById(R.id.spinnerLibraries)
+        listViewLibraries = findViewById(R.id.listViewLibraries)
         btnRefresh = findViewById(R.id.btnRefresh)
+        btnMoveUp = findViewById(R.id.btnMoveUp)
+        btnMoveDown = findViewById(R.id.btnMoveDown)
         btnExecute = findViewById(R.id.btnExecute)
         txtStatus = findViewById(R.id.txtStatus)
 
+        adapter = LibraryAdapter(this, libraryList)
+        listViewLibraries.adapter = adapter
+
         initWorkspaceFolders()
+
+        listViewLibraries.setOnItemClickListener { _, _, position, _ ->
+            adapter.selectedPosition = position
+            adapter.notifyDataSetChanged()
+        }
 
         btnRefresh.setOnClickListener {
             scanLibraries()
         }
 
+        btnMoveUp.setOnClickListener {
+            if (adapter.selectedPosition != -1) {
+                adapter.moveUp(adapter.selectedPosition)
+            }
+        }
+
+        btnMoveDown.setOnClickListener {
+            if (adapter.selectedPosition != -1) {
+                adapter.moveDown(adapter.selectedPosition)
+            }
+        }
+
         btnExecute.setOnClickListener {
-            executeSelectedLibrary()
+            executeSelectedLibrariesInOrder()
         }
     }
 
@@ -79,68 +105,77 @@ class MainActivity : AppCompatActivity() {
 
         val soFiles = libsDir.listFiles { _, name -> name.endsWith(".so", ignoreCase = true) }
 
-        if (soFiles.isNullOrEmpty()) {
-            val emptyList = listOf("Tidak ada file .so ditemukan")
-            val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList)
-            spinnerLibraries.adapter = adapter
-            txtStatus.text = "Status: Workspace Siap (libs kosong)\nPath: ${libsDir.absolutePath}"
-        } else {
-            val fileNames = soFiles.map { it.name }
-            val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, fileNames)
-            spinnerLibraries.adapter = adapter
+        libraryList.clear()
+        adapter.selectedPosition = -1
+
+        if (!soFiles.isNullOrEmpty()) {
+            soFiles.sortedBy { it.name }.forEach { file ->
+                libraryList.add(LibraryItem(file.name))
+            }
             txtStatus.text = "Status: Ditemukan ${soFiles.size} library .so\nPath: ${libsDir.absolutePath}"
+        } else {
+            txtStatus.text = "Status: Workspace Siap (libs kosong)\nPath: ${libsDir.absolutePath}"
         }
+
+        adapter.notifyDataSetChanged()
     }
 
-    private fun executeSelectedLibrary() {
-        val selectedItem = spinnerLibraries.selectedItem?.toString()
+    private fun executeSelectedLibrariesInOrder() {
+        val selectedFiles = adapter.getOrderedSelectedLibraries()
 
-        if (selectedItem.isNullOrEmpty() || selectedItem == "Tidak ada file .so ditemukan") {
-            txtStatus.text = "Status ERROR: Tidak ada file .so yang dipilih!"
+        if (selectedFiles.isEmpty()) {
+            txtStatus.text = "Status ERROR: Belum ada file .so yang dicentang!"
             return
         }
 
-        val sourceSoFile = File(libsDir, selectedItem)
+        val logStringBuilder = StringBuilder()
+        val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        logStringBuilder.append("=== EXECUTION RUN AT $timeStamp ===\n")
 
-        if (!sourceSoFile.exists()) {
-            txtStatus.text = "Status ERROR: File ${sourceSoFile.name} tidak ditemukan!"
-            return
+        txtStatus.text = "Status: Menyalin ${selectedFiles.size} file ke internal storage..."
+
+        // 1. Copy semua file terpilih ke internal privat filesDir dulu
+        for (fileName in selectedFiles) {
+            val source = File(libsDir, fileName)
+            val target = File(filesDir, fileName)
+            if (source.exists()) {
+                copyFile(source, target)
+                target.setExecutable(true, false)
+                target.setReadable(true, false)
+            }
         }
 
-        txtStatus.text = "Status: Menyiapkan ${sourceSoFile.name} ke internal storage..."
+        // 2. Load satu per satu sesuai urutan (#1, #2, dst)
+        var successCount = 0
+        val totalCount = selectedFiles.size
 
-        try {
-            // 1. Salin file .so dari media SDCard ke folder internal app privat (melewati Linker Namespace restriction)
-            val internalSoFile = File(filesDir, sourceSoFile.name)
-            copyFile(sourceSoFile, internalSoFile)
-
-            // Pastikan file executable
-            internalSoFile.setExecutable(true, false)
-            internalSoFile.setReadable(true, false)
-
-            txtStatus.text = "Status: Memuat native library..."
-
-            // 2. Load dari internal privat storage
-            System.load(internalSoFile.absolutePath)
-
-            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            val logMsg = "[$timeStamp] SUCCESS: Loaded ${sourceSoFile.name} from internal storage\n"
-            writeLog(logMsg)
-
-            txtStatus.text = "Status: BERHASIL MENGEKSEKUSI!\n" +
-                    "Library: ${sourceSoFile.name}\n" +
-                    "Loaded Path: ${internalSoFile.absolutePath}\n" +
-                    "Log: ${File(logsDir, "launcher.log").absolutePath}"
-
-        } catch (e: Throwable) {
-            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            val errorMsg = "[$timeStamp] ERROR: Failed to load ${sourceSoFile.name} -> ${e.message}\n"
-            writeLog(errorMsg)
-
-            txtStatus.text = "Status EKSEKUSI GAGAL:\n" +
-                    "Error: ${e.localizedMessage ?: e.message}\n" +
-                    "File: ${sourceSoFile.name}"
+        for ((index, fileName) in selectedFiles.withIndex()) {
+            val targetSoFile = File(filesDir, fileName)
+            val stepInfo = "[${index + 1}/$totalCount] Loading $fileName..."
+            
+            try {
+                System.load(targetSoFile.absolutePath)
+                successCount++
+                logStringBuilder.append("SUCCESS: $stepInfo\n")
+            } catch (e: Throwable) {
+                val errorMsg = "FAILED: $stepInfo -> ${e.message}\n"
+                logStringBuilder.append(errorMsg)
+                
+                // Stop eksekusi jika dependency di tengah jalan gagal
+                writeLog(logStringBuilder.toString())
+                txtStatus.text = "Status EKSEKUSI TERHENTI di (#${index + 1}):\n" +
+                        "Failed file: $fileName\n" +
+                        "Error: ${e.localizedMessage ?: e.message}"
+                return
+            }
         }
+
+        logStringBuilder.append("RESULT: $successCount/$totalCount libraries loaded successfully.\n\n")
+        writeLog(logStringBuilder.toString())
+
+        txtStatus.text = "Status: BERHASIL MEMUAT SEMUA! ($successCount/$totalCount)\n" +
+                "Urutan Load:\n" + selectedFiles.joinToString("\n") { " -> $it" } + "\n" +
+                "Log: ${File(logsDir, "launcher.log").absolutePath}"
     }
 
     private fun copyFile(source: File, target: File) {
