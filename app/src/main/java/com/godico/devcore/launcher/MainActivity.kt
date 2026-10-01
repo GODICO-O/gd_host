@@ -25,11 +25,12 @@ class MainActivity : AppCompatActivity() {
 
     private val PERMISSION_REQUEST_CODE = 1001
 
-    // Path langsung ke: /sdcard/Android/media/com.godico.devcore.launcher/libs
+    // Mendapatkan folder: /sdcard/Android/media/com.godico.devcore.launcher/libs
     private val libsDir: File
         get() {
-            val mediaDir = File(Environment.getExternalStorageDirectory(), "Android/media/${packageName}/libs")
-            return mediaDir
+            val externalDir = getExternalFilesDir(null)
+            val mediaBase = externalDir?.parentFile?.parentFile
+            return File(mediaBase, "media/$packageName/libs")
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,18 +45,19 @@ class MainActivity : AppCompatActivity() {
             if (hasStoragePermission()) {
                 scanLibraries()
             } else {
-                checkAndRequestPermissions()
+                requestStoragePermission()
             }
         }
+
+        // Jalankan pengecekan pertama kali tanpa memicu looping
+        checkPermissionsAndInit()
     }
 
     override fun onResume() {
         super.onResume()
-        // Cek ulang izin setiap kali aplikasi kembali aktif/dibuka
+        // Cukup coba scan jika izin SUDAH diberikan, JANGAN panggil intent request permission di sini
         if (hasStoragePermission()) {
             scanLibraries()
-        } else {
-            checkAndRequestPermissions()
         }
     }
 
@@ -69,14 +71,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkAndRequestPermissions() {
+    private fun checkPermissionsAndInit() {
         if (hasStoragePermission()) {
             scanLibraries()
-            return
+        } else {
+            txtStatus.text = "Status: Butuh izin penyimpanan.\nTekan tombol SCAN untuk mengizinkan."
+            requestStoragePermission()
         }
+    }
 
-        txtStatus.text = "Status: Meminta izin penyimpanan..."
-
+    private fun requestStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
@@ -101,13 +105,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scanLibraries() {
-        // Buat folder jika belum ada
+        // Buat folder media/com.godico.devcore.launcher/libs jika belum ada
         if (!libsDir.exists()) {
-            val created = libsDir.mkdirs()
-            if (!created && !libsDir.exists()) {
-                txtStatus.text = "Status: Gagal membuat folder!\nPath: ${libsDir.absolutePath}"
-                return
-            }
+            libsDir.mkdirs()
         }
 
         val soFiles = libsDir.listFiles { _, name -> name.endsWith(".so", ignoreCase = true) }
@@ -116,7 +116,7 @@ class MainActivity : AppCompatActivity() {
             val emptyList = listOf("Tidak ada file .so ditemukan")
             val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList)
             spinnerLibraries.adapter = adapter
-            txtStatus.text = "Status: Folder libs kosong!\nSilakan letakkan file .so di:\n${libsDir.absolutePath}"
+            txtStatus.text = "Status: Folder libs kosong!\nPath: ${libsDir.absolutePath}"
         } else {
             val fileNames = soFiles.map { it.name }
             val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, fileNames)
