@@ -32,11 +32,11 @@ class MainActivity : AppCompatActivity() {
     private val libsDir: File
         get() = File(baseMediaDir, "libs")
 
-    private val assetsDir: File
-        get() = File(baseMediaDir, "assets")
-
     private val logsDir: File
         get() = File(baseMediaDir, "logs")
+
+    private val saveDir: File
+        get() = File(filesDir, "save")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,16 +67,12 @@ class MainActivity : AppCompatActivity() {
         btnMoveUp.setOnClickListener {
             if (adapter.selectedPosition != -1) {
                 adapter.moveUp(adapter.selectedPosition)
-            } else {
-                txtStatus.text = "Status: Sentuh salah satu baris file dulu sampai berwarna biru lalu tekan MOVE UP!"
             }
         }
 
         btnMoveDown.setOnClickListener {
             if (adapter.selectedPosition != -1) {
                 adapter.moveDown(adapter.selectedPosition)
-            } else {
-                txtStatus.text = "Status: Sentuh salah satu baris file dulu sampai berwarna biru lalu tekan MOVE DOWN!"
             }
         }
 
@@ -94,9 +90,9 @@ class MainActivity : AppCompatActivity() {
         try {
             if (baseMediaDir != null) {
                 if (!libsDir.exists()) libsDir.mkdirs()
-                if (!assetsDir.exists()) assetsDir.mkdirs()
                 if (!logsDir.exists()) logsDir.mkdirs()
             }
+            if (!saveDir.exists()) saveDir.mkdirs()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -137,81 +133,62 @@ class MainActivity : AppCompatActivity() {
 
         val logStringBuilder = StringBuilder()
         val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-        logStringBuilder.append("=== EXECUTION RUN AT $timeStamp ===\n")
+        logStringBuilder.append("=== HOOKED EXECUTION RUN AT $timeStamp ===\n")
 
-        txtStatus.text = "Status: Menyiapkan file ke internal storage..."
+        txtStatus.text = "Status: Salin file .so ke cache internal (Bypass Namespace Restriction)..."
 
-        // 1. Salin SEMUA file .so di libsDir ke filesDir internal
+        // 1. Salin SEMUA file .so ke cacheDir privat untuk bypass namespace restrictions
         val allSoInLibs = libsDir.listFiles { _, name -> name.endsWith(".so", ignoreCase = true) }
         allSoInLibs?.forEach { source ->
-            val target = File(filesDir, source.name)
+            val target = File(cacheDir, source.name)
             copyFile(source, target)
             target.setExecutable(true, false)
             target.setReadable(true, false)
         }
 
-        val isPassiveMode = chkPassiveDependencies.isChecked
+        // 2. Eksekusi Berurutan Sesuai Selection Queue (#1, #2, #3, dst)
+        var successCount = 0
+        val totalCount = selectedQueue.size
 
-        if (isPassiveMode) {
-            // MODE PASSIVE: Memuat HANYA file target utama (nomor urut terakhir dalam queue)
-            // Sisa file dependency seperti libfmod.so akan otomatis di-link oleh Android OS Linker dari filesDir tanpa trigger JNI Crash
-            val mainTargetItem = selectedQueue.last()
-            val targetSoFile = File(filesDir, mainTargetItem.fileName)
+        for ((index, item) in selectedQueue.withIndex()) {
+            val targetSoFile = File(cacheDir, item.fileName)
+            val stepInfo = "[${index + 1}/$totalCount] System.load: ${item.fileName}"
 
             try {
+                // Memuat Native Shared Object
                 System.load(targetSoFile.absolutePath)
-                val msg = "SUCCESS (Passive Mode): Executed ${mainTargetItem.fileName} with auto-linked dependencies.\n"
-                logStringBuilder.append(msg)
-                writeLog(logStringBuilder.toString())
+                successCount++
+                logStringBuilder.append("SUCCESS: $stepInfo\n")
 
-                txtStatus.text = "Status: BERHASIL MENGEKSEKUSI TARGET!\n" +
-                        "Main Target: ${mainTargetItem.fileName}\n" +
-                        "Dependencies Passive: ${selectedQueue.dropLast(1).joinToString { it.fileName }}\n" +
-                        "Log: ${File(logsDir, "launcher.log").absolutePath}"
+                // JIKA COCOS2DCPP BARUSAN DI-LOAD -> JALANKAN GOT HOOK ENGINE!
+                if (item.fileName.contains("cocos2dcpp", ignoreCase = true)) {
+                    val isHooked = LauncherFix.initHookEngine(saveDir.absolutePath)
+                    if (isHooked) {
+                        logStringBuilder.append("HOOK STATUS: Native GOT fopen/rename Redirect Applied Successfully -> ${saveDir.absolutePath}\n")
+                    } else {
+                        logStringBuilder.append("HOOK STATUS: GOT Hooking Warning (Address base 0).\n")
+                    }
+                }
 
             } catch (e: Throwable) {
-                val errorMsg = "FAILED (Passive Mode): ${mainTargetItem.fileName} -> ${e.message}\n"
+                val errorMsg = "FAILED: $stepInfo -> ${e.localizedMessage ?: e.message}\n"
                 logStringBuilder.append(errorMsg)
                 writeLog(logStringBuilder.toString())
 
-                txtStatus.text = "Status EKSEKUSI GAGAL:\n" +
-                        "Target: ${mainTargetItem.fileName}\n" +
+                txtStatus.text = "Status EKSEKUSI TERHENTI di (#${index + 1}):\n" +
+                        "Failed file: ${item.fileName}\n" +
                         "Error: ${e.localizedMessage ?: e.message}"
+                return
             }
-
-        } else {
-            // MODE SEQUENTIAL: Panggil System.load() manual satu per satu sesuai urutan #1, #2, #3
-            var successCount = 0
-            val totalCount = selectedQueue.size
-
-            for ((index, item) in selectedQueue.withIndex()) {
-                val targetSoFile = File(filesDir, item.fileName)
-                val stepInfo = "[${index + 1}/$totalCount] Loading ${item.fileName}..."
-
-                try {
-                    System.load(targetSoFile.absolutePath)
-                    successCount++
-                    logStringBuilder.append("SUCCESS: $stepInfo\n")
-                } catch (e: Throwable) {
-                    val errorMsg = "FAILED: $stepInfo -> ${e.message}\n"
-                    logStringBuilder.append(errorMsg)
-                    writeLog(logStringBuilder.toString())
-
-                    txtStatus.text = "Status EKSEKUSI TERHENTI di (#${index + 1}):\n" +
-                            "Failed file: ${item.fileName}\n" +
-                            "Error: ${e.localizedMessage ?: e.message}"
-                    return
-                }
-            }
-
-            logStringBuilder.append("RESULT: $successCount/$totalCount libraries loaded successfully.\n\n")
-            writeLog(logStringBuilder.toString())
-
-            val loadedNames = selectedQueue.joinToString("\n") { " -> ${it.fileName}" }
-            txtStatus.text = "Status: BERHASIL MEMUAT ALL SEQUENTIAL! ($successCount/$totalCount)\n" +
-                    "Urutan Load:\n$loadedNames\n" +
-                    "Log: ${File(logsDir, "launcher.log").absolutePath}"
         }
+
+        logStringBuilder.append("RESULT: $successCount/$totalCount libraries loaded & hooked successfully.\n\n")
+        writeLog(logStringBuilder.toString())
+
+        val loadedNames = selectedQueue.joinToString("\n") { " -> ${it.fileName}" }
+        txtStatus.text = "Status: EKSEKUSI DENGAN HOOKING BERHASIL! ($successCount/$totalCount)\n" +
+                "Urutan Load:\n$loadedNames\n" +
+                "Save Redirect: ${saveDir.absolutePath}"
     }
 
     private fun copyFile(source: File, target: File) {
